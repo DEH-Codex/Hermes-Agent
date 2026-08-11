@@ -494,6 +494,71 @@ def test_gating_forum_general_topic_normalizes_to_one():
     assert adapter2._should_process_message(general) is False
 
 
+def test_allowed_topics_chat_scoped_entries_do_not_leak_across_groups():
+    """`chat_id:thread_id` entries must match only that group's topic."""
+    adapter = _make_adapter(require_mention=False, allowed_topics=["-100:8"])
+
+    assert adapter._should_process_message(_group_message("hello", chat_id=-100, thread_id=8)) is True
+    # Same thread number, different group — previously allowed by a bare "8".
+    assert adapter._should_process_message(_group_message("hello", chat_id=-200, thread_id=8)) is False
+    assert adapter._should_process_message(_group_message("hello", chat_id=-100, thread_id=9)) is False
+
+
+def test_allowed_topics_mixes_bare_and_chat_scoped_entries():
+    adapter = _make_adapter(require_mention=False, allowed_topics=["5", "-200:8"])
+
+    # Bare entry keeps its legacy any-group behaviour.
+    assert adapter._should_process_message(_group_message("hello", chat_id=-100, thread_id=5)) is True
+    assert adapter._should_process_message(_group_message("hello", chat_id=-200, thread_id=5)) is True
+    # Scoped entry is honoured alongside it.
+    assert adapter._should_process_message(_group_message("hello", chat_id=-200, thread_id=8)) is True
+    assert adapter._should_process_message(_group_message("hello", chat_id=-100, thread_id=8)) is False
+
+
+def test_allowed_topics_chat_scoped_general_topic():
+    """Missing thread id still resolves to General (1) for scoped entries."""
+    adapter = _make_adapter(require_mention=False, allowed_topics=["-100:1"])
+
+    assert adapter._should_process_message(_group_message("hello", chat_id=-100, thread_id=None)) is True
+    assert adapter._should_process_message(_group_message("hello", chat_id=-200, thread_id=None)) is False
+
+
+def test_observed_unmentioned_messages_honor_chat_scoped_allowed_topics():
+    adapter = _make_adapter(
+        require_mention=True,
+        allowed_chats=["-100", "-200"],
+        group_allowed_chats=["-100", "-200"],
+        allowed_topics=["-100:8"],
+        observe_unmentioned_group_messages=True,
+    )
+
+    assert adapter._should_observe_unmentioned_group_message(
+        _group_message("side chatter", chat_id=-100, thread_id=8)
+    ) is True
+    assert adapter._should_observe_unmentioned_group_message(
+        _group_message("side chatter", chat_id=-200, thread_id=8)
+    ) is False
+
+
+def test_observed_plain_reply_anchor_gates_as_scoped_general_topic():
+    adapter = _make_adapter(
+        require_mention=True,
+        allowed_chats=["-200"],
+        group_allowed_chats=["-200"],
+        allowed_topics=["-200:1"],
+        observe_unmentioned_group_messages=True,
+    )
+    message = _group_message("side chatter", chat_id=-200, thread_id=55)
+    message.is_topic_message = False
+    message.chat.is_forum = False
+
+    assert adapter._should_observe_unmentioned_group_message(message) is True
+
+
+def test_regex_mention_patterns_allow_custom_wake_words():
+    adapter = _make_adapter(require_mention=True, mention_patterns=[r"^\s*chompy\b"])
+
+
 def test_bot_self_messages_are_ignored_in_dm_and_group():
     """Bot-authored messages must not re-enter as fresh user turns (issue #11905).
 
