@@ -9164,6 +9164,14 @@ class TelegramAdapter(BasePlatformAdapter):
         if allowed and chat_id_str not in allowed:
             return guest_mention
 
+        # Record the forum topic before the mention rules decide whether to
+        # answer. A mention-gated group is still a group whose topic layout we
+        # want in config.yaml — otherwise `/topics` only ever knows about
+        # topics someone happened to @mention the bot in. Deliberately below
+        # the allowed_chats/allowed_topics/ignored_threads gates above: Hermes
+        # must not record structure for chats it was told to ignore.
+        self._discover_group_topic_from_message(message)
+
         if guest_mention:
             return True
         if chat_id_str in self._telegram_free_response_chats():
@@ -10199,6 +10207,28 @@ class TelegramAdapter(BasePlatformAdapter):
                 return str(name)
         return None
 
+    def _discover_group_topic_from_message(self, message: Message) -> None:
+        """Record the forum topic a group message arrived in, if any.
+
+        Split out from :meth:`_build_message_event` so discovery can run for
+        messages the mention rules will drop. Callers are responsible for
+        applying the allowlist gates first.
+        """
+        chat = getattr(message, "chat", None)
+        if chat is None:
+            return
+
+        thread_id = self._effective_message_thread_id(message)
+        if thread_id is None:
+            return
+
+        try:
+            self._discover_group_topic(
+                str(chat.id), thread_id, self._extract_forum_topic_name(message)
+            )
+        except Exception:
+            logger.debug("[%s] Group topic discovery failed", self.name, exc_info=True)
+
     def _discover_group_topic(
         self,
         chat_id: str,
@@ -10406,6 +10436,9 @@ class TelegramAdapter(BasePlatformAdapter):
             # Group/supergroup forum topic skill binding via config.extra['group_topics'].
             # Topics are discovered as they're used, so the operator never has to
             # dig thread_ids out of t.me/c/<id>/<thread> links by hand.
+            # Idempotent: _should_process_message already discovered this topic
+            # for inbound messages. Kept so events built by other paths (and
+            # tests calling _build_message_event directly) still record it.
             discovered_name = self._extract_forum_topic_name(message)
             self._discover_group_topic(str(chat.id), thread_id_str, discovered_name)
 
