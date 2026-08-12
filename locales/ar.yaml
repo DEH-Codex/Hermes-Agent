@@ -367,7 +367,7 @@ gateway:
     header:                  "**المواضيع في {chat}** ({count})"
     unnamed:                 "(دون اسم)"
     current_marker:          "← أنت هنا"
-    footer:                  "سلّم مهمة cron إلى موضوع باستخدام `deliver: \"{example}\"`.\nاربط مهارة بإضافة `skill:` إلى الموضوع ضمن `platforms.telegram.extra.group_topics` في config.yaml."
+    footer:                  "سلّم مهمة cron إلى موضوع باستخدام `deliver: \"{example}\"`.\n\nاربط مهارة بإضافة `skill:` إلى الموضوع ضمن `platforms.telegram.extra.group_topics` في config.yaml."
 
   undo:
     nothing:               "لا شيء للتراجع عنه."
