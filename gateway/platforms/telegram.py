@@ -1997,6 +1997,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.VOICE | filters.Document.ALL | filters.Sticker.ALL,
                 self._handle_media_message
             ))
+            self._register_forum_topic_service_handler(self._app)
             # Handle inline keyboard button callbacks (update prompts)
             self._app.add_handler(CallbackQueryHandler(self._handle_callback_query))
             
@@ -5441,6 +5442,11 @@ class TelegramAdapter(BasePlatformAdapter):
             return False
 
         thread_id = getattr(message, "message_thread_id", None)
+        if (
+            thread_id is None
+            and getattr(getattr(message, "chat", None), "is_forum", False) is True
+        ):
+            thread_id = self._GENERAL_TOPIC_THREAD_ID
         observe_chat_id = str(getattr(getattr(message, "chat", None), "id", ""))
         if not self._telegram_topic_allowed(observe_chat_id, thread_id):
             return False
@@ -5725,6 +5731,11 @@ class TelegramAdapter(BasePlatformAdapter):
             return True
 
         thread_id = getattr(message, "message_thread_id", None)
+        if (
+            thread_id is None
+            and getattr(getattr(message, "chat", None), "is_forum", False) is True
+        ):
+            thread_id = self._GENERAL_TOPIC_THREAD_ID
         if not self._telegram_topic_allowed(
             str(getattr(getattr(message, "chat", None), "id", "")), thread_id
         ):
@@ -5748,9 +5759,6 @@ class TelegramAdapter(BasePlatformAdapter):
 
         chat_id_str = str(getattr(getattr(message, "chat", None), "id", ""))
 
-        if self._telegram_exclusive_bot_mentions() and self._explicit_bot_mentions_exclude_self(message):
-            return False
-
         # Resolve guest-mode mention bypass once so _message_mentions_bot
         # is not called redundantly in the normal flow below.
         guest_mention = self._is_guest_mention(message)
@@ -5769,6 +5777,9 @@ class TelegramAdapter(BasePlatformAdapter):
         # the allowed_chats/allowed_topics/ignored_threads gates above: Hermes
         # must not record structure for chats it was told to ignore.
         self._discover_group_topic_from_message(message)
+
+        if self._telegram_exclusive_bot_mentions() and self._explicit_bot_mentions_exclude_self(message):
+            return False
 
         if guest_mention:
             return True
@@ -5840,6 +5851,17 @@ class TelegramAdapter(BasePlatformAdapter):
         await self._cache_replied_media(msg, event)
         event = self._apply_telegram_group_observe_attribution(event)
         self._enqueue_text_event(event)
+
+    async def _handle_forum_topic_service_message(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Discover forum topics from Telegram create and rename updates."""
+        message = self._effective_update_message(update)
+        if message is not None:
+            # Reuse the normal authorization and topic-filter gates. The return
+            # value only controls replies; discovery happens before mention
+            # routing for an authorized forum message.
+            self._should_process_message(message)
 
     async def _handle_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle incoming command messages."""
@@ -6507,6 +6529,47 @@ class TelegramAdapter(BasePlatformAdapter):
 
     # ── Group (forum supergroup) topics ──────────────────────────────────
 
+    def _register_forum_topic_service_handler(self, app) -> None:
+        """Register Telegram forum-topic create and rename updates."""
+        app.add_handler(TelegramMessageHandler(
+            filters.StatusUpdate.FORUM_TOPIC_CREATED
+            | filters.StatusUpdate.FORUM_TOPIC_EDITED,
+            self._handle_forum_topic_service_message,
+        ))
+
+    @staticmethod
+    def _group_topics_extra_from_config(
+        config: Dict[str, Any], *, create: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Return the effective config block that owns ``group_topics``.
+
+        ``platforms`` has loader precedence over ``gateway.platforms``. When
+        neither path owns the key, new discovery uses the documented top-level
+        ``platforms`` path.
+        """
+        gateway_config = config.get("gateway")
+        path_candidates = (
+            config.get("platforms"),
+            gateway_config.get("platforms")
+            if isinstance(gateway_config, dict)
+            else None,
+        )
+        for platforms in path_candidates:
+            if not isinstance(platforms, dict):
+                continue
+            telegram_config = platforms.get("telegram")
+            if not isinstance(telegram_config, dict):
+                continue
+            extra = telegram_config.get("extra")
+            if isinstance(extra, dict) and "group_topics" in extra:
+                return extra
+
+        if not create:
+            return None
+        platforms = config.setdefault("platforms", {})
+        telegram_config = platforms.setdefault("telegram", {})
+        return telegram_config.setdefault("extra", {})
+
     def _ensure_group_topic_state(self) -> None:
         """Initialise group-topic state for adapters built without ``__init__``.
 
@@ -6542,12 +6605,8 @@ class TelegramAdapter(BasePlatformAdapter):
             with open(config_path, "r", encoding="utf-8") as f:
                 config = _yaml.safe_load(f) or {}
 
-            extra = (
-                config.get("platforms", {})
-                .get("telegram", {})
-                .get("extra", {})
-            )
-            if "group_topics" not in extra:
+            extra = self._group_topics_extra_from_config(config)
+            if extra is None:
                 # config.yaml simply doesn't use this key. Leave whatever came
                 # in via PlatformConfig.extra alone rather than clobbering an
                 # operator's skill bindings with an empty list.
@@ -6585,10 +6644,6 @@ class TelegramAdapter(BasePlatformAdapter):
                         return topic
                 return None
             return None
-
-        found = _lookup()
-        if found is not None:
-            return found
 
         self._reload_group_topics_from_config()
         return _lookup()
@@ -6692,21 +6747,22 @@ class TelegramAdapter(BasePlatformAdapter):
 
         existing = self._get_group_topic_info(chat_id, thread_id)
         if existing is not None:
-            self._group_topics_seen.add(seen_key)
             if not name or existing.get("name") == name:
+                self._group_topics_seen.add(seen_key)
                 return
             if existing.get("name") and not authoritative:
+                self._group_topics_seen.add(seen_key)
                 return
 
-        self._group_topics_seen.add(seen_key)
-        self._persist_group_topic(chat_id, thread_id, name)
+        if self._persist_group_topic(chat_id, thread_id, name):
+            self._group_topics_seen.add(seen_key)
 
     def _persist_group_topic(
         self,
         chat_id: str,
         thread_id: str,
         name: Optional[str] = None,
-    ) -> None:
+    ) -> bool:
         """Write a discovered forum topic into ``extra.group_topics``.
 
         Never clobbers an operator-set ``skill`` — only ``name`` is updated,
@@ -6720,15 +6776,14 @@ class TelegramAdapter(BasePlatformAdapter):
                     "[%s] Config file not found at %s, cannot persist group topic",
                     self.name, config_path,
                 )
-                return
+                return False
 
             import yaml as _yaml
             with open(config_path, "r", encoding="utf-8") as f:
                 config = _yaml.safe_load(f) or {}
 
-            platforms = config.setdefault("platforms", {})
-            telegram_config = platforms.setdefault("telegram", {})
-            extra = telegram_config.setdefault("extra", {})
+            extra = self._group_topics_extra_from_config(config, create=True)
+            assert extra is not None
             group_topics = extra.setdefault("group_topics", [])
 
             try:
@@ -6763,7 +6818,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 changed = True
 
             if not changed:
-                return
+                return True
 
             fd, tmp_path = tempfile.mkstemp(
                 dir=str(config_path.parent),
@@ -6788,11 +6843,13 @@ class TelegramAdapter(BasePlatformAdapter):
                 "[%s] Discovered group topic chat_id=%s thread_id=%s name=%r",
                 self.name, chat_id, thread_id, name,
             )
+            return True
         except Exception as e:
             logger.warning(
                 "[%s] Failed to persist group topic to config: %s",
                 self.name, e, exc_info=True,
             )
+            return False
 
     def known_group_topics(self, chat_id: str) -> List[Dict[str, Any]]:
         """Return known forum topics for ``chat_id``, freshest config first.

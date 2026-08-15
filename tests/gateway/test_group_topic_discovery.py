@@ -78,6 +78,18 @@ def _read_group_topics():
     )
 
 
+def _read_gateway_group_topics():
+    with open(_config_path(), "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f) or {}
+    return (
+        config.get("gateway", {})
+        .get("platforms", {})
+        .get("telegram", {})
+        .get("extra", {})
+        .get("group_topics", [])
+    )
+
+
 def _group_message(
     *,
     chat_id=CHAT_ID,
@@ -211,6 +223,51 @@ def test_discovery_preserves_operator_skill_binding_on_rename():
     ]
 
 
+def test_discovery_updates_gateway_platforms_without_shadowing_skill_binding():
+    _write_config({
+        "gateway": {
+            "platforms": {
+                "telegram": {
+                    "extra": {
+                        "group_topics": [
+                            {
+                                "chat_id": CHAT_ID,
+                                "topics": [
+                                    {
+                                        "thread_id": 5,
+                                        "name": "eng",
+                                        "skill": "software-development",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    })
+    adapter = _make_adapter()
+
+    adapter._discover_group_topic(
+        str(CHAT_ID), "5", "engineering", authoritative=True
+    )
+
+    assert _read_gateway_group_topics() == [
+        {
+            "chat_id": CHAT_ID,
+            "topics": [
+                {
+                    "thread_id": 5,
+                    "name": "engineering",
+                    "skill": "software-development",
+                }
+            ],
+        }
+    ]
+    with open(_config_path(), "r", encoding="utf-8") as f:
+        assert "platforms" not in (yaml.safe_load(f) or {})
+
+
 def test_stale_reply_anchor_never_overwrites_a_known_name():
     """The bug this guards: every message in a renamed topic carries the
     topic's creation-time name, which used to revert the rename (and any
@@ -321,6 +378,18 @@ def test_discovery_survives_missing_config_file():
     assert not _config_path().exists()
 
 
+def test_discovery_retries_after_missing_config_file_is_created():
+    adapter = _make_adapter()
+
+    adapter._discover_group_topic(str(CHAT_ID), "5")
+    _write_config({"platforms": {"telegram": {"extra": {}}}})
+    adapter._discover_group_topic(str(CHAT_ID), "5")
+
+    assert _read_group_topics() == [
+        {"chat_id": CHAT_ID, "topics": [{"thread_id": 5}]}
+    ]
+
+
 # ── discovery runs independently of the mention gate ─────────────────────
 
 
@@ -394,6 +463,29 @@ def test_discovery_records_general_topic_without_thread_id():
     assert _read_group_topics()[0]["topics"] == [{"thread_id": 1}]
 
 
+def test_general_topic_is_ignored_before_discovery_when_thread_id_is_omitted():
+    _write_config({"platforms": {"telegram": {"extra": {}}}})
+    adapter = _adapter_with_gates(require_mention=False, ignored_threads=[1])
+    msg = _group_message(thread_id=None)
+    msg.chat.is_forum = True
+
+    assert adapter._should_process_message(msg) is False
+    assert _read_group_topics() == []
+
+
+def test_allowed_topic_is_discovered_before_exclusive_bot_routing():
+    _write_config({"platforms": {"telegram": {"extra": {}}}})
+    adapter = _adapter_with_gates(
+        require_mention=True,
+        exclusive_bot_mentions=True,
+        allowed_chats=str(CHAT_ID),
+    )
+    msg = _group_message(thread_id=7, text="@research_bot investigate this")
+
+    assert adapter._should_process_message(msg) is False
+    assert _read_group_topics()[0]["topics"] == [{"thread_id": 7}]
+
+
 def test_dm_never_discovers_group_topics():
     _write_config({"platforms": {"telegram": {"extra": {}}}})
     adapter = _adapter_with_gates(require_mention=True)
@@ -459,6 +551,41 @@ def test_reload_does_not_clobber_in_memory_config():
     assert adapter._get_group_topic_info(str(CHAT_ID), "5") == {
         "name": "Engineering", "thread_id": 5, "skill": "software-development"
     }
+
+
+def test_cached_group_topic_binding_hot_reloads_from_gateway_platforms():
+    adapter = _make_adapter(group_topics_config=[
+        {
+            "chat_id": CHAT_ID,
+            "topics": [
+                {"name": "Engineering", "thread_id": 5, "skill": "old-skill"}
+            ],
+        }
+    ])
+    _write_config({
+        "gateway": {
+            "platforms": {
+                "telegram": {
+                    "extra": {
+                        "group_topics": [
+                            {
+                                "chat_id": CHAT_ID,
+                                "topics": [
+                                    {
+                                        "name": "Engineering",
+                                        "thread_id": 5,
+                                        "skill": "new-skill",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    })
+
+    assert adapter._get_group_topic_info(str(CHAT_ID), "5")["skill"] == "new-skill"
 
 
 # ── known_group_topics (backs /topics) ───────────────────────────────────
