@@ -968,12 +968,13 @@ A walkthrough for the common case: one supergroup, a handful of long-running top
 
 **3. Let Hermes learn the topics.** Send one message in each topic. Hermes records each `thread_id` into `config.yaml` (see [Topic discovery](#topic-discovery)). Run `/topics` to confirm all four are listed.
 
-**4. Allow the group to respond without a mention.** By default Hermes only answers in groups when @mentioned. For a private workspace group you almost certainly want it to answer everything:
+**4. Choose the group's mention policy.** By default Hermes keeps the open-group behavior and responds to normal group messages it can see. If you enable `require_mention` for your other groups but want this private workspace to remain open, add it to `free_response_chats`:
 
 ```yaml
 platforms:
   telegram:
     extra:
+      require_mention: true
       allowed_chats: "-1001234567890"
       free_response_chats: "-1001234567890"
 ```
