@@ -461,6 +461,70 @@ def test_reload_does_not_clobber_in_memory_config():
     }
 
 
+def test_init_ignores_invalid_topics_container():
+    """A partially edited `topics: null` stanza must not prevent startup."""
+    adapter = _make_adapter(group_topics_config=[
+        {"chat_id": CHAT_ID, "topics": None},
+    ])
+
+    assert adapter._get_group_topic_info(str(CHAT_ID), "5") is None
+
+
+def test_init_ignores_non_mapping_topic_items():
+    """Malformed scalar items are skipped without hiding valid siblings."""
+    adapter = _make_adapter(group_topics_config=[
+        {
+            "chat_id": CHAT_ID,
+            "topics": [5, {"thread_id": 8, "name": "briefs", "skill": "morning"}],
+        },
+    ])
+
+    assert adapter._get_group_topic_info(str(CHAT_ID), "8") == {
+        "thread_id": 8,
+        "name": "briefs",
+        "skill": "morning",
+    }
+
+
+def test_build_message_event_hot_reloads_edited_skill_binding():
+    """The next message must use a skill edited on an already known topic."""
+    from gateway.platforms.base import MessageType
+
+    initial_topics = [
+        {
+            "chat_id": CHAT_ID,
+            "topics": [{"thread_id": 5, "name": "Engineering", "skill": "morning"}],
+        },
+    ]
+    _write_config({
+        "platforms": {"telegram": {"extra": {"group_topics": initial_topics}}}
+    })
+    adapter = _make_adapter(group_topics_config=initial_topics)
+    assert adapter._build_message_event(
+        _group_message(thread_id=5), MessageType.TEXT
+    ).auto_skill == "morning"
+
+    edited_topics = [
+        {
+            "chat_id": CHAT_ID,
+            "topics": [
+                {
+                    "thread_id": 5,
+                    "name": "Engineering",
+                    "skill": "software-development",
+                }
+            ],
+        },
+    ]
+    _write_config({
+        "platforms": {"telegram": {"extra": {"group_topics": edited_topics}}}
+    })
+
+    assert adapter._build_message_event(
+        _group_message(thread_id=5), MessageType.TEXT
+    ).auto_skill == "software-development"
+
+
 # ── known_group_topics (backs /topics) ───────────────────────────────────
 
 

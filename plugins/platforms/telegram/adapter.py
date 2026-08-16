@@ -872,7 +872,7 @@ class TelegramAdapter(BasePlatformAdapter):
         self._group_topics_seen: Set[str] = {
             f"{entry.get('chat_id')}:{topic.get('thread_id')}"
             for entry in self._group_topic_entries(self._group_topics_config)
-            for topic in entry.get("topics", [])
+            for topic in self._group_topic_items(entry)
             if topic.get("thread_id") is not None
         }
         # Document size cap. Telegram's public Bot API caps getFile at 20MB; a
@@ -10088,6 +10088,14 @@ class TelegramAdapter(BasePlatformAdapter):
             return [entry for entry in group_topics if isinstance(entry, dict)]
         return []
 
+    @staticmethod
+    def _group_topic_items(chat_entry: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Return only mapping-shaped topics from a valid list container."""
+        topics = chat_entry.get("topics", [])
+        if not isinstance(topics, list):
+            return []
+        return [topic for topic in topics if isinstance(topic, dict)]
+
     def _ensure_group_topic_state(self) -> None:
         """Initialise group-topic state for adapters built without ``__init__``.
 
@@ -10102,8 +10110,8 @@ class TelegramAdapter(BasePlatformAdapter):
             self._group_topics_seen = {
                 f"{entry.get('chat_id')}:{topic.get('thread_id')}"
                 for entry in self._group_topic_entries(self._group_topics_config)
-                for topic in entry.get("topics", [])
-                if isinstance(topic, dict) and topic.get("thread_id") is not None
+                for topic in self._group_topic_items(entry)
+                if topic.get("thread_id") is not None
             }
 
     def _reload_group_topics_from_config(self) -> None:
@@ -10137,8 +10145,8 @@ class TelegramAdapter(BasePlatformAdapter):
             self._group_topics_seen = {
                 f"{entry.get('chat_id')}:{topic.get('thread_id')}"
                 for entry in self._group_topic_entries(self._group_topics_config)
-                for topic in entry.get("topics", [])
-                if isinstance(topic, dict) and topic.get("thread_id") is not None
+                for topic in self._group_topic_items(entry)
+                if topic.get("thread_id") is not None
             }
         except Exception as e:
             logger.debug("[%s] Failed to reload group_topics from config: %s", self.name, e)
@@ -10148,32 +10156,26 @@ class TelegramAdapter(BasePlatformAdapter):
     ) -> Optional[Dict[str, Any]]:
         """Look up group forum topic config by chat_id and thread_id.
 
-        Returns the topic dict (``name``, ``skill``, ...) or None. On a cache
-        miss the config is re-read once, so topics added to config.yaml while
-        the gateway runs are picked up without a restart.
+        Returns the topic dict (``name``, ``skill``, ...) or None. The config
+        is re-read before lookup so edits to an existing topic's skill binding
+        are picked up by the next message without a restart.
         """
         if not thread_id:
             return None
         self._ensure_group_topic_state()
+        self._reload_group_topics_from_config()
 
         def _lookup() -> Optional[Dict[str, Any]]:
             for chat_entry in self._group_topic_entries(self._group_topics_config):
                 if str(chat_entry.get("chat_id", "")) != str(chat_id):
                     continue
-                for topic in chat_entry.get("topics", []):
-                    if not isinstance(topic, dict):
-                        continue
+                for topic in self._group_topic_items(chat_entry):
                     tid = topic.get("thread_id")
                     if tid is not None and str(tid) == str(thread_id):
                         return topic
                 return None
             return None
 
-        found = _lookup()
-        if found is not None:
-            return found
-
-        self._reload_group_topics_from_config()
         return _lookup()
 
     def _extract_forum_topic_name(self, message: Message) -> tuple[Optional[str], bool]:
@@ -10389,8 +10391,8 @@ class TelegramAdapter(BasePlatformAdapter):
             if str(chat_entry.get("chat_id", "")) == str(chat_id):
                 topics = [
                     dict(topic)
-                    for topic in chat_entry.get("topics", [])
-                    if isinstance(topic, dict) and topic.get("thread_id") is not None
+                    for topic in self._group_topic_items(chat_entry)
+                    if topic.get("thread_id") is not None
                 ]
                 return sorted(topics, key=lambda t: int(t["thread_id"]))
         return []
