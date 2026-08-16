@@ -5567,8 +5567,9 @@ def run_conversation(
                         else:
                             agent._buffer_status(f"⚠️ Non-retryable error (HTTP {status_code}) — trying fallback...")
                     if agent._try_activate_fallback(
-                        reason=classified.reason,
+                        reason=None,
                         http_status=classified.status_code,
+                        _diagnostic_reason=classified.reason,
                     ):
                         active_system_prompt = _sync_failover_system_message(
                             agent, api_messages, active_system_prompt)
@@ -5794,8 +5795,9 @@ def run_conversation(
                     if agent._has_pending_fallback():
                         agent._buffer_status(f"⚠️ Max retries ({max_retries}) exhausted — trying fallback...")
                     if agent._try_activate_fallback(
-                        reason=classified.reason,
+                        reason=None,
                         http_status=classified.status_code,
+                        _diagnostic_reason=classified.reason,
                     ):
                         active_system_prompt = _sync_failover_system_message(
                             agent, api_messages, active_system_prompt)
