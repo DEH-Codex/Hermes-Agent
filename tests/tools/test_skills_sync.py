@@ -69,6 +69,23 @@ class TestDirHash:
         # A nonexistent dir hashes as empty content rather than raising.
         assert isinstance(_dir_hash(tmp_path / "nope"), str)
 
+    def test_hash_ignores_python_runtime_cache_artifacts(self, tmp_path):
+        clean = tmp_path / "clean"
+        cached = tmp_path / "cached"
+        for directory in (clean, cached):
+            directory.mkdir()
+            (directory / "SKILL.md").write_text("# Test")
+            (directory / "scripts").mkdir()
+            (directory / "scripts" / "main.py").write_text("print(1)")
+
+        cache_dir = cached / "scripts" / "__pycache__"
+        cache_dir.mkdir()
+        (cache_dir / "main.cpython-311.pyc").write_bytes(b"compiled")
+        (cached / "scripts" / "legacy.pyc").write_bytes(b"legacy")
+        (cached / "scripts" / "optimized.pyo").write_bytes(b"optimized")
+
+        assert _dir_hash(clean) == _dir_hash(cached)
+
 
 class TestDiscoverBundledSkills:
     def test_finds_skill_dirs_and_ignores_non_skills(self, tmp_path):
