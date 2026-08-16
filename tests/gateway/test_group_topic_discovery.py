@@ -37,12 +37,12 @@ def _ensure_telegram_mock():
     sys.modules["telegram.constants"] = constants_mod
     sys.modules["telegram.request"] = telegram_mod.request
 
-    sys.modules.pop("gateway.platforms.telegram", None)
+    sys.modules.pop("plugins.platforms.telegram.adapter", None)
 
 
 _ensure_telegram_mock()
 
-from gateway.platforms.telegram import TelegramAdapter  # noqa: E402
+from plugins.platforms.telegram.adapter import TelegramAdapter  # noqa: E402
 from telegram.constants import ChatType as _ChatType  # noqa: E402
 
 CHAT_ID = -1001234567890
@@ -461,6 +461,70 @@ def test_reload_does_not_clobber_in_memory_config():
     }
 
 
+def test_init_ignores_invalid_topics_container():
+    """A partially edited `topics: null` stanza must not prevent startup."""
+    adapter = _make_adapter(group_topics_config=[
+        {"chat_id": CHAT_ID, "topics": None},
+    ])
+
+    assert adapter._get_group_topic_info(str(CHAT_ID), "5") is None
+
+
+def test_init_ignores_non_mapping_topic_items():
+    """Malformed scalar items are skipped without hiding valid siblings."""
+    adapter = _make_adapter(group_topics_config=[
+        {
+            "chat_id": CHAT_ID,
+            "topics": [5, {"thread_id": 8, "name": "briefs", "skill": "morning"}],
+        },
+    ])
+
+    assert adapter._get_group_topic_info(str(CHAT_ID), "8") == {
+        "thread_id": 8,
+        "name": "briefs",
+        "skill": "morning",
+    }
+
+
+def test_build_message_event_hot_reloads_edited_skill_binding():
+    """The next message must use a skill edited on an already known topic."""
+    from gateway.platforms.base import MessageType
+
+    initial_topics = [
+        {
+            "chat_id": CHAT_ID,
+            "topics": [{"thread_id": 5, "name": "Engineering", "skill": "morning"}],
+        },
+    ]
+    _write_config({
+        "platforms": {"telegram": {"extra": {"group_topics": initial_topics}}}
+    })
+    adapter = _make_adapter(group_topics_config=initial_topics)
+    assert adapter._build_message_event(
+        _group_message(thread_id=5), MessageType.TEXT
+    ).auto_skill == "morning"
+
+    edited_topics = [
+        {
+            "chat_id": CHAT_ID,
+            "topics": [
+                {
+                    "thread_id": 5,
+                    "name": "Engineering",
+                    "skill": "software-development",
+                }
+            ],
+        },
+    ]
+    _write_config({
+        "platforms": {"telegram": {"extra": {"group_topics": edited_topics}}}
+    })
+
+    assert adapter._build_message_event(
+        _group_message(thread_id=5), MessageType.TEXT
+    ).auto_skill == "software-development"
+
+
 # ── known_group_topics (backs /topics) ───────────────────────────────────
 
 
@@ -537,3 +601,47 @@ def test_known_group_topics_hot_reloads_config():
     })
 
     assert adapter.known_group_topics(str(CHAT_ID)) == [{"thread_id": 2, "name": "ideas"}]
+
+
+def test_mapping_shape_remains_supported_for_lookup_and_listing():
+    """Discovery must preserve the mapping-shaped group_topics form accepted upstream."""
+    adapter = _make_adapter(group_topics_config={
+        str(CHAT_ID): [
+            {"thread_id": 8, "name": "briefs", "skill": "morning"},
+        ]
+    })
+
+    assert adapter._get_group_topic_info(str(CHAT_ID), "8") == {
+        "thread_id": 8,
+        "name": "briefs",
+        "skill": "morning",
+    }
+    assert adapter.known_group_topics(str(CHAT_ID)) == [
+        {"thread_id": 8, "name": "briefs", "skill": "morning"}
+    ]
+
+
+def test_discovery_appends_to_mapping_shape_without_rewriting_its_shape():
+    _write_config({
+        "platforms": {
+            "telegram": {
+                "extra": {
+                    "group_topics": {
+                        str(CHAT_ID): [{"thread_id": 5, "name": "general"}],
+                    }
+                }
+            }
+        }
+    })
+    adapter = _make_adapter(group_topics_config={
+        str(CHAT_ID): [{"thread_id": 5, "name": "general"}],
+    })
+
+    adapter._discover_group_topic(str(CHAT_ID), "6", "briefs")
+
+    assert _read_group_topics() == {
+        str(CHAT_ID): [
+            {"thread_id": 5, "name": "general"},
+            {"thread_id": 6, "name": "briefs"},
+        ]
+    }
