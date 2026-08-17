@@ -18530,15 +18530,6 @@ def main(
     # Handle query shorthand
     query = query or q
 
-    # A single-query invocation prints one response and exits; it has no later
-    # turn that can receive a detached tool completion. Bind that delivery
-    # capability before constructing the CLI or resolving its credentials so
-    # delegate_task uses its existing inline fallback for the whole run.
-    if query or image:
-        from gateway.session_context import declare_stateless_channel
-
-        declare_stateless_channel()
-    
     # Parse toolsets - handle both string and tuple/list inputs
     # Default to hermes-cli toolset which includes cronjob management tools
     toolsets_list = None
@@ -18725,12 +18716,26 @@ def main(
     
     # Handle single query mode
     if query or image:
+        # A single-query invocation prints one response and exits; it has no
+        # later turn that can receive a detached tool completion. Bind the
+        # capability before credentials, agent construction, or the first turn
+        # so delegate_task uses its existing inline fallback for the whole run.
+        from gateway.session_context import (
+            declare_stateless_channel,
+            restore_stateless_channel,
+        )
+
+        _stateless_channel_token = declare_stateless_channel()
         # One-shot mode: no between-turns MCP late-binding refresh, so the
         # agent must wait the full MCP cold-start bound before its first
         # (and only) tool snapshot. See #51316.
-        cli._single_query_mode = True
-        if not cli._claim_active_session("cli", stderr=bool(quiet)):
-            sys.exit(1)
+        try:
+            cli._single_query_mode = True
+            if not cli._claim_active_session("cli", stderr=bool(quiet)):
+                sys.exit(1)
+        except BaseException:
+            restore_stateless_channel(_stateless_channel_token)
+            raise
         try:
             query, single_query_images = _collect_query_images(query, image)
             # Kanban workers spawn with ``hermes chat -q "work kanban task <id>"``;
@@ -18949,7 +18954,10 @@ def main(
                 cli.chat(query, images=single_query_images or None)
                 cli._print_exit_summary(clear_screen=False)
         finally:
-            _finalize_single_query(cli)
+            try:
+                _finalize_single_query(cli)
+            finally:
+                restore_stateless_channel(_stateless_channel_token)
         return
     
     # Run interactive mode

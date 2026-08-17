@@ -219,7 +219,7 @@ def test_single_query_main_returns_top_level_delegation_inline(
     """Every finite ``chat -q`` entry returns delegated work before exit."""
     import run_agent
     import tools.delegate_tool as delegate_tool
-    from gateway.session_context import reset_session_vars
+    from gateway.session_context import async_delivery_supported, reset_session_vars
 
     results = []
     dispatched = []
@@ -345,10 +345,90 @@ def test_single_query_main_returns_top_level_delegation_inline(
             assert exc_info.value.code == 0
         else:
             cli.main(query=query, image=image, quiet=False, toolsets="terminal")
+
+        payload = json.loads(results[-1])
+        assert not dispatched, "finite single-query runs must not detach a child"
+        assert payload.get("status") != "dispatched"
+        assert payload["results"][0]["summary"] == "inline child result"
+
+        # ``main`` can be embedded and invoked more than once in one interpreter.
+        # Its finite-runner capability must be scoped to that invocation rather
+        # than poison a following direct-Python/background delegation.
+        assert async_delivery_supported() is True
+        follow_up = json.loads(run_top_level_delegation())
+        assert dispatched == ["detached"]
+        assert follow_up["status"] == "dispatched"
     finally:
         reset_session_vars()
 
-    payload = json.loads(results[-1])
-    assert not dispatched, "finite single-query runs must not detach a child"
-    assert payload.get("status") != "dispatched"
-    assert payload["results"][0]["summary"] == "inline child result"
+
+def test_single_query_main_restores_delivery_capability_when_session_claim_exits(
+    monkeypatch,
+):
+    """A failed session claim cannot leak one-shot capability into the caller."""
+    from gateway.session_context import async_delivery_supported, reset_session_vars
+
+    class FakeCLI:
+        def __init__(self, **_kwargs):
+            self.session_id = "claim-failed"
+
+        def _claim_active_session(self, _surface, *, stderr=False):
+            return False
+
+    monkeypatch.setattr(cli, "HermesCLI", FakeCLI)
+    monkeypatch.setattr(cli.atexit, "register", lambda *_a, **_kw: None)
+
+    reset_session_vars()
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main(query="hello", quiet=True, toolsets="terminal")
+
+        assert exc_info.value.code == 1
+        assert async_delivery_supported() is True
+    finally:
+        reset_session_vars()
+
+
+def test_single_query_main_restores_delivery_capability_when_finalization_fails(
+    monkeypatch,
+):
+    """The one-shot cleanup failure path restores only its temporary binding."""
+    from gateway.session_context import async_delivery_supported, reset_session_vars
+
+    class FakeCLI:
+        def __init__(self, **_kwargs):
+            self.console = SimpleNamespace(print=lambda *_a, **_kw: None)
+            self.session_id = "finalize-failed"
+
+        def _claim_active_session(self, _surface, *, stderr=False):
+            return True
+
+        def _show_security_advisories(self):
+            return None
+
+        def chat(self, _query, images=None):
+            return "done"
+
+        def _print_exit_summary(self, **_kwargs):
+            return None
+
+    monkeypatch.setattr(cli, "HermesCLI", FakeCLI)
+    monkeypatch.setattr(cli.atexit, "register", lambda *_a, **_kw: None)
+
+    def fail_finalization(_cli):
+        raise RuntimeError("cleanup failed")
+
+    monkeypatch.setattr(
+        cli,
+        "_finalize_single_query",
+        fail_finalization,
+    )
+
+    reset_session_vars()
+    try:
+        with pytest.raises(RuntimeError, match="cleanup failed"):
+            cli.main(query="hello", quiet=False, toolsets="terminal")
+
+        assert async_delivery_supported() is True
+    finally:
+        reset_session_vars()
