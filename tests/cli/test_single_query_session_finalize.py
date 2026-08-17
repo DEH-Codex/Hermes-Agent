@@ -365,6 +365,103 @@ def test_single_query_main_returns_top_level_delegation_inline(
         reset_session_vars()
 
 
+def test_nonquiet_single_query_propagates_delivery_capability_to_real_chat_worker(
+    monkeypatch, tmp_path
+):
+    """The real non-quiet chat worker inherits the finite-runner capability."""
+    from gateway.session_context import async_delivery_supported, reset_session_vars
+
+    worker_capabilities = []
+    delegated_results = []
+    dispatched = []
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes-home"))
+    monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
+    monkeypatch.delenv("HERMES_KANBAN_GOAL_MODE", raising=False)
+    monkeypatch.setattr(cli, "_hermes_home", tmp_path / "hermes-home")
+    monkeypatch.setattr(cli, "_configure_output_history", lambda **_kw: None)
+    monkeypatch.setattr(cli, "_run_state_db_auto_maintenance", lambda *_a: None)
+    monkeypatch.setattr(cli, "_run_checkpoint_auto_maintenance", lambda: None)
+    monkeypatch.setattr("hermes_state.SessionDB", lambda: SimpleNamespace())
+    monkeypatch.setattr(cli, "_collect_query_images", lambda query, _image: (query, []))
+    monkeypatch.setattr(cli, "_cprint", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        cli, "ChatConsole", lambda: SimpleNamespace(print=lambda *_a, **_kw: None)
+    )
+    monkeypatch.setattr(cli.atexit, "register", lambda *_a, **_kw: None)
+    monkeypatch.setattr(cli, "_finalize_single_query", lambda _cli: None)
+    monkeypatch.setattr(cli.HermesCLI, "_claim_active_session", lambda *_a, **_kw: True)
+    monkeypatch.setattr(cli.HermesCLI, "_ensure_runtime_credentials", lambda _self: True)
+    monkeypatch.setattr(
+        cli.HermesCLI,
+        "_resolve_turn_agent_config",
+        lambda _self, _query: {
+            "signature": "test-route",
+            "model": None,
+            "runtime": None,
+            "request_overrides": None,
+        },
+    )
+    monkeypatch.setattr(cli.HermesCLI, "_show_security_advisories", lambda _self: None)
+    monkeypatch.setattr(cli.HermesCLI, "_print_exit_summary", lambda _self, **_kw: None)
+    monkeypatch.setattr(cli.HermesCLI, "_flush_stream", lambda _self: None)
+    monkeypatch.setattr(cli.HermesCLI, "_flush_credit_notices", lambda _self: None)
+    monkeypatch.setattr(cli.HermesCLI, "_invalidate", lambda _self, **_kw: None)
+
+    class WorkerAgent:
+        _session_messages = None
+        _session_persist_lock = None
+
+        def __init__(self, session_id):
+            self.session_id = session_id
+            self._delegate_depth = 0
+            self._subagent_id = None
+            self._active_children = []
+            self._active_children_lock = threading.Lock()
+
+        def run_conversation(self, **_kwargs):
+            worker_capabilities.append(async_delivery_supported())
+            if async_delivery_supported():
+                dispatched.append("detached")
+                delegated_results.append(
+                    json.dumps({"status": "dispatched", "delegation_id": "detached-child"})
+                )
+            else:
+                delegated_results.append(
+                    json.dumps(
+                        {
+                            "results": [
+                                {"status": "completed", "summary": "inline child result"}
+                            ]
+                        }
+                    )
+                )
+            return {
+                "final_response": "done",
+                "messages": [],
+                "response_previewed": True,
+            }
+
+    def init_agent(self, **_kwargs):
+        self.agent = WorkerAgent(self.session_id)
+        self._active_agent_route_signature = "test-route"
+        return True
+
+    monkeypatch.setattr(cli.HermesCLI, "_init_agent", init_agent)
+
+    reset_session_vars()
+    try:
+        cli.main(query="delegate this", quiet=False, toolsets="terminal")
+
+        assert worker_capabilities == [False]
+        assert not dispatched
+        payload = json.loads(delegated_results[-1])
+        assert payload["results"][0]["summary"] == "inline child result"
+        assert async_delivery_supported() is True
+    finally:
+        reset_session_vars()
+
+
 def test_single_query_main_restores_delivery_capability_when_session_claim_exits(
     monkeypatch,
 ):

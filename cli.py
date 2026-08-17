@@ -55,6 +55,7 @@ from hermes_cli.cli_agent_setup_mixin import CLIAgentSetupMixin
 from hermes_cli.cli_commands_mixin import CLICommandsMixin
 from hermes_cli.cli_billing_mixin import CLIBillingMixin
 from agent.interrupt_compat import request_hard_interrupt
+from tools.thread_context import propagate_context_to_thread
 
 # prompt_toolkit for fixed input area TUI
 from prompt_toolkit.history import FileHistory
@@ -14458,7 +14459,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             # finishes; reset on the next turn.
             self._prompt_start_time = time.time()
             self._prompt_duration = 0.0
-            agent_thread = threading.Thread(target=run_agent, daemon=True)
+            agent_thread = threading.Thread(
+                target=propagate_context_to_thread(run_agent), daemon=True
+            )
             agent_thread.start()
 
             # Ambient "thinking" sound: calm bubble blips while the agent
