@@ -223,6 +223,7 @@ def test_single_query_main_returns_top_level_delegation_inline(
 
     results = []
     dispatched = []
+    constructor_capabilities = []
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes-home"))
     monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
     monkeypatch.delenv("HERMES_KANBAN_GOAL_MODE", raising=False)
@@ -285,6 +286,7 @@ def test_single_query_main_returns_top_level_delegation_inline(
 
     class FakeCLI:
         def __init__(self, **_kwargs):
+            constructor_capabilities.append(async_delivery_supported())
             self.console = SimpleNamespace(print=lambda *_a, **_kw: None)
             self.provider = "test-provider"
             self.model = "test-model"
@@ -347,6 +349,7 @@ def test_single_query_main_returns_top_level_delegation_inline(
             cli.main(query=query, image=image, quiet=False, toolsets="terminal")
 
         payload = json.loads(results[-1])
+        assert constructor_capabilities == [False]
         assert not dispatched, "finite single-query runs must not detach a child"
         assert payload.get("status") != "dispatched"
         assert payload["results"][0]["summary"] == "inline child result"
@@ -429,6 +432,72 @@ def test_single_query_main_restores_delivery_capability_when_finalization_fails(
         with pytest.raises(RuntimeError, match="cleanup failed"):
             cli.main(query="hello", quiet=False, toolsets="terminal")
 
+        assert async_delivery_supported() is True
+    finally:
+        reset_session_vars()
+
+
+def test_single_query_main_declares_delivery_capability_before_constructor(
+    monkeypatch,
+):
+    """The credential-reading CLI constructor sees the finite-runner contract."""
+    from gateway.session_context import async_delivery_supported, reset_session_vars
+
+    constructor_capabilities = []
+
+    class FakeCLI:
+        def __init__(self, **_kwargs):
+            constructor_capabilities.append(async_delivery_supported())
+            self.console = SimpleNamespace(print=lambda *_a, **_kw: None)
+            self.session_id = "constructor-observed"
+
+        def _claim_active_session(self, _surface, *, stderr=False):
+            return True
+
+        def _show_security_advisories(self):
+            return None
+
+        def chat(self, _query, images=None):
+            return "done"
+
+        def _print_exit_summary(self, **_kwargs):
+            return None
+
+    monkeypatch.setattr(cli, "HermesCLI", FakeCLI)
+    monkeypatch.setattr(cli.atexit, "register", lambda *_a, **_kw: None)
+    monkeypatch.setattr(cli, "_finalize_single_query", lambda _cli: None)
+
+    reset_session_vars()
+    try:
+        cli.main(query="hello", quiet=False, toolsets="terminal")
+
+        assert constructor_capabilities == [False]
+        assert async_delivery_supported() is True
+    finally:
+        reset_session_vars()
+
+
+def test_single_query_main_restores_delivery_capability_after_constructor_error(
+    monkeypatch,
+):
+    """A constructor error cannot leak the temporary finite-runner capability."""
+    from gateway.session_context import async_delivery_supported, reset_session_vars
+
+    constructor_capabilities = []
+
+    class FakeCLI:
+        def __init__(self, **_kwargs):
+            constructor_capabilities.append(async_delivery_supported())
+            raise RuntimeError("constructor failed")
+
+    monkeypatch.setattr(cli, "HermesCLI", FakeCLI)
+
+    reset_session_vars()
+    try:
+        with pytest.raises(RuntimeError, match="constructor failed"):
+            cli.main(query="hello", quiet=False, toolsets="terminal")
+
+        assert constructor_capabilities == [False]
         assert async_delivery_supported() is True
     finally:
         reset_session_vars()

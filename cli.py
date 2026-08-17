@@ -18563,22 +18563,39 @@ def main(
     
     parsed_skills = _parse_skills_argument(skills)
 
-    # Create CLI instance
-    cli = HermesCLI(
-        model=model,
-        toolsets=toolsets_list,
-        provider=provider,
-        reasoning=reasoning,
-        api_key=api_key,
-        base_url=base_url,
-        max_turns=max_turns,
-        verbose=verbose,
-        compact=compact,
-        resume=resume,
-        checkpoints=checkpoints,
-        pass_session_id=pass_session_id,
-        ignore_rules=ignore_rules,
-    )
+    # HermesCLI resolves runtime/provider credentials in its constructor. A
+    # finite query must therefore bind its no-late-delivery capability before
+    # construction, then restore the caller's exact prior capability when the
+    # constructor returns or raises. The turn itself gets a separate scope
+    # below because it later resolves credentials again before its first call.
+    _constructor_stateless_channel_token = None
+    if query or image:
+        from gateway.session_context import (
+            declare_stateless_channel,
+            restore_stateless_channel,
+        )
+
+        _constructor_stateless_channel_token = declare_stateless_channel()
+    try:
+        # Create CLI instance
+        cli = HermesCLI(
+            model=model,
+            toolsets=toolsets_list,
+            provider=provider,
+            reasoning=reasoning,
+            api_key=api_key,
+            base_url=base_url,
+            max_turns=max_turns,
+            verbose=verbose,
+            compact=compact,
+            resume=resume,
+            checkpoints=checkpoints,
+            pass_session_id=pass_session_id,
+            ignore_rules=ignore_rules,
+        )
+    finally:
+        if _constructor_stateless_channel_token is not None:
+            restore_stateless_channel(_constructor_stateless_channel_token)
 
     if parsed_skills:
         # Load the skill payloads in the background: skill_view walks the
