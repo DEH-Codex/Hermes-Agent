@@ -486,7 +486,8 @@ def async_delivery_supported() -> bool:
     is delivered: sessions explicitly bound by a stateless channel — an adapter
     that cannot route a notification back after the turn ends (the API server),
     or a one-shot runner that exits after its final response (``hermes -z``,
-    cron — see :func:`declare_stateless_channel`) — and dispatcher-spawned
+    ``hermes chat -q``, or cron — see :func:`declare_stateless_channel`) —
+    and dispatcher-spawned
     Kanban workers (identified by ``HERMES_KANBAN_TASK``), which are one-shot
     ``chat -q`` subprocesses. The real gateway platforms, the interactive CLI,
     and any other path that never bound the contextvar return ``True``.

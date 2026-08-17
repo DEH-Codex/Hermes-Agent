@@ -18529,6 +18529,15 @@ def main(
     
     # Handle query shorthand
     query = query or q
+
+    # A single-query invocation prints one response and exits; it has no later
+    # turn that can receive a detached tool completion. Bind that delivery
+    # capability before constructing the CLI or resolving its credentials so
+    # delegate_task uses its existing inline fallback for the whole run.
+    if query or image:
+        from gateway.session_context import declare_stateless_channel
+
+        declare_stateless_channel()
     
     # Parse toolsets - handle both string and tuple/list inputs
     # Default to hermes-cli toolset which includes cronjob management tools

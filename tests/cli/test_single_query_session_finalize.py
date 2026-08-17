@@ -1,3 +1,5 @@
+import json
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -201,3 +203,152 @@ def test_quiet_single_query_main_finalizes_while_preserving_exit_code(monkeypatc
     assert ("claim", "cli", True) in calls
     assert ("run", "hello", []) in calls
     assert calls[-1] == ("finalize", "quiet-session")
+
+
+@pytest.mark.parametrize(
+    ("quiet", "query", "image"),
+    [
+        (False, "delegate this", None),
+        (True, "delegate this", None),
+        (True, None, "image-only.png"),
+    ],
+)
+def test_single_query_main_returns_top_level_delegation_inline(
+    monkeypatch, tmp_path, quiet, query, image
+):
+    """Every finite ``chat -q`` entry returns delegated work before exit."""
+    import run_agent
+    import tools.delegate_tool as delegate_tool
+    from gateway.session_context import reset_session_vars
+
+    results = []
+    dispatched = []
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes-home"))
+    monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
+    monkeypatch.delenv("HERMES_KANBAN_GOAL_MODE", raising=False)
+    monkeypatch.setattr(cli, "_collect_query_images", lambda q, _i: (q or "image task", []))
+    monkeypatch.setattr(cli.atexit, "register", lambda *_a, **_kw: None)
+    monkeypatch.setattr(cli, "_finalize_single_query", lambda _cli: None)
+    monkeypatch.setattr(delegate_tool, "_load_config", lambda: {"max_iterations": 1})
+    monkeypatch.setattr(delegate_tool, "_get_max_spawn_depth", lambda: 2)
+    monkeypatch.setattr(delegate_tool, "_get_max_concurrent_children", lambda: 1)
+    monkeypatch.setattr(delegate_tool, "_get_max_async_children", lambda: 1)
+    monkeypatch.setattr(
+        delegate_tool,
+        "_resolve_delegation_credentials",
+        lambda *_a, **_kw: {
+            "model": "test-model",
+            "provider": None,
+            "base_url": None,
+            "api_key": None,
+            "api_mode": None,
+            "command": None,
+            "args": None,
+        },
+    )
+    monkeypatch.setattr(
+        delegate_tool,
+        "_build_child_agent",
+        lambda **_kw: SimpleNamespace(_subagent_id="child-1"),
+    )
+    monkeypatch.setattr(
+        delegate_tool,
+        "_run_single_child",
+        lambda *_a, **_kw: {
+            "task_index": 0,
+            "status": "completed",
+            "summary": "inline child result",
+            "api_calls": 1,
+            "duration_seconds": 0.01,
+        },
+    )
+
+    def fake_dispatch(*_args, **_kwargs):
+        dispatched.append("detached")
+        return {"status": "dispatched", "delegation_id": "detached-child"}
+
+    monkeypatch.setattr(
+        "tools.async_delegation.dispatch_async_delegation_batch", fake_dispatch
+    )
+
+    def run_top_level_delegation():
+        parent = SimpleNamespace(
+            _delegate_depth=0,
+            _subagent_id=None,
+            _active_children=[],
+            _active_children_lock=threading.Lock(),
+            session_id="single-query-session",
+        )
+        return run_agent.AIAgent._dispatch_delegate_task(
+            parent, {"goal": "return the child result"}
+        )
+
+    class FakeCLI:
+        def __init__(self, **_kwargs):
+            self.console = SimpleNamespace(print=lambda *_a, **_kw: None)
+            self.provider = "test-provider"
+            self.model = "test-model"
+            self.requested_provider = "test-provider"
+            self.session_id = "single-query-session"
+            self.conversation_history = []
+            self._active_agent_route_signature = "same-route"
+            self.agent = SimpleNamespace(
+                session_id=self.session_id,
+                platform="cli",
+                quiet_mode=False,
+                suppress_status_output=False,
+                stream_delta_callback=object(),
+                tool_gen_callback=object(),
+                run_conversation=self._run_conversation,
+            )
+
+        def _claim_active_session(self, _surface, *, stderr=False):
+            return True
+
+        def _ensure_runtime_credentials(self):
+            return True
+
+        def _resolve_turn_agent_config(self, _query):
+            return {
+                "signature": "same-route",
+                "model": None,
+                "runtime": None,
+                "request_overrides": None,
+            }
+
+        def _init_agent(self, **_kwargs):
+            return True
+
+        def _show_security_advisories(self):
+            return None
+
+        def _print_exit_summary(self, **_kwargs):
+            return None
+
+        def chat(self, _query, images=None):
+            result = run_top_level_delegation()
+            results.append(result)
+            return result
+
+        def _run_conversation(self, **_kwargs):
+            result = run_top_level_delegation()
+            results.append(result)
+            return {"final_response": result}
+
+    monkeypatch.setattr(cli, "HermesCLI", FakeCLI)
+
+    reset_session_vars()
+    try:
+        if quiet:
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main(query=query, image=image, quiet=True, toolsets="terminal")
+            assert exc_info.value.code == 0
+        else:
+            cli.main(query=query, image=image, quiet=False, toolsets="terminal")
+    finally:
+        reset_session_vars()
+
+    payload = json.loads(results[-1])
+    assert not dispatched, "finite single-query runs must not detach a child"
+    assert payload.get("status") != "dispatched"
+    assert payload["results"][0]["summary"] == "inline child result"
