@@ -752,3 +752,24 @@ Reboot check fails on the gateway → Stream D Step 7 Plan B, re-run the gate.
   `hermes dashboard`, any future service. If any step suggests 0.0.0.0, refuse.
 - If a `hermes` command's syntax disagrees with this brief, trust `hermes <cmd> --help`
   (post-update build) over the brief, and note the discrepancy.
+
+---
+
+## Subsequent Changes (post-v2.4)
+
+These items post-date the v2.4 plan and are tracked here for audit. They do NOT
+retroactively alter the v2.4 design — they record what changed after the plan was
+frozen.
+
+- **2026-08-12 — GitHub account renamed `MiloTheAssistant` → `DEH-Codex`.** Local
+  git remotes for this repo (`origin`, `milo`) were retargeted from
+  `https://github.com/MiloTheAssistant/Hermes-Agent.git` to
+  `https://github.com/DEH-Codex/Hermes-Agent.git`. Verified via `git fetch
+  origin` (exit 0, main resolves to same commit hash 56000cc29 as before).
+  `gh auth status` still shows the stale "MiloTheAssistant" label from the
+  keyring; the underlying token resolves to `DEH-Codex` correctly, so this is
+  cosmetic. Manual fix when convenient: `gh auth logout --hostname github.com
+  && gh auth login --hostname github.com --web` (requires browser flow, cannot
+  be done in this headless session). Git author `user.name` / `user.email`
+  were intentionally NOT changed — that would break the link to existing
+  commit history.
