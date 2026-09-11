@@ -1,0 +1,79 @@
+Cronjob Response: brief-sunday-audit
+(job_id: a11a612b981d)
+-------------
+
+Calendar returned 0 events for both windows — Proton calendar share may not be linked yet (or John's calendar genuinely has nothing scheduled). I'll report that honestly per the no-fabrication rule. Mail shows 10 unread but they're all marketing/newsletter noise (Ross Givens, Seeking Alpha, Skool promos, etc.) — I'll surface the top 3 per the brief's "max 3" rule, flagging them as newsletters so John doesn't think anything's an action item.
+
+Final report:
+
+```
+🔧 SUNDAY SYSTEM AUDIT — JUNE 28, 2026  9:01 PM CT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SYSTEM
+• BotCentral disk: 4% used (115 GiB / 3.6 TiB)
+• MiloCache disk:  8% used (135 GiB / 1.9 TiB)
+• Docker:          2 containers, both healthy
+• Gateway:         running (PID 42168)
+• Backups:         last successful 2026-06-27 02:00 (daily, writing to /Volumes/MiloCache/backups/hermes/)
+• Ollama :11434:   exposed on *:11434 (0.0.0.0, LAN-reachable)
+• OpenClaw/OpenHermes: inactive (no processes)
+
+⚠️  Ollama is bound to 0.0.0.0, not 127.0.0.1. If BotCentral is on a shared
+   LAN, consider `OLLAMA_HOST=127.0.0.1` in the ollama env to keep the
+   inference endpoint off the network. No other action needed.
+
+📨  WEEK IN INBOX (unread, past 7 days — top 3 of 10)
+• OnePay — "Updates to user agreements" (Jun 28) only non-newsletter in the
+  set; the other 9 unread are marketing/newsletter (Ross Givens, Seeking
+  Alpha, Skool event promos, Dividend/TA Ideas). ⚠️ worth a glance at the
+  OnePay TOS update; rest is safe to bulk-archive.
+
+📅  WEEK ON CALENDAR
+0 events on the Proton-linked calendar for 2026-06-21 → 2026-06-27.
+(source returned an empty range — calendar share may not be linked, or the
+week was genuinely clear.)
+
+📆  NEXT WEEK (Mon–Fri, 2026-06-29 → 2026-07-03)
+0 events returned. No first meeting to preview. If Proton Calendar isn't
+intentionally empty, check that the calendar share is still authorized in
+the Proton account.
+
+✅  ACTION ITEMS
+• Skim OnePay "Updates to user agreements" and either accept or archive.
+• Decide: bulk-archive the 9 newsletter unread, or keep subscribing.
+• Optional: lock Ollama to localhost (see SYSTEM note).
+• Optional: verify Proton Calendar share is still active (see NEXT WEEK).
+```
+
+🔧 SUNDAY SYSTEM AUDIT — JUNE 28, 2026  9:01 PM CT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SYSTEM
+• BotCentral disk: 4% used (115 GiB / 3.6 TiB)
+• MiloCache disk:  8% used (135 GiB / 1.9 TiB)
+• Docker:          2 containers, both healthy
+• Gateway:         running (PID 42168)
+• Backups:         last successful 2026-06-27 02:00 (daily, writing to /Volumes/MiloCache/backups/hermes/)
+• Ollama :11434:   exposed on *:11434 (0.0.0.0, LAN-reachable)
+• OpenClaw/OpenHermes: inactive (no processes)
+
+⚠️  Ollama is bound to 0.0.0.0, not 127.0.0.1. If BotCentral is on a shared LAN, set `OLLAMA_HOST=127.0.0.1` in the ollama env to keep the inference endpoint off the network. No other action needed.
+
+📨  WEEK IN INBOX (unread, past 7 days — top 3 of 10)
+• OnePay — "Updates to user agreements" (Jun 28) — the only non-newsletter in the set; the other 9 unread are marketing/newsletter (Ross Givens, Seeking Alpha, Skool event promos, Dividend/TA Ideas, Traders Daily Direction). ⚠️ worth a glance at the OnePay TOS update; rest is safe to bulk-archive.
+
+📅  WEEK ON CALENDAR
+0 events on the Proton-linked calendar for 2026-06-21 → 2026-06-27.
+(source returned an empty range — calendar share may not be linked, or the week was genuinely clear. Not fabricating a shape.)
+
+📆  NEXT WEEK (Mon–Fri, 2026-06-29 → 2026-07-03)
+0 events returned. No first meeting to preview. If Proton Calendar isn't intentionally empty, check that the calendar share is still authorized in the Proton account.
+
+✅  ACTION ITEMS
+• Skim OnePay "Updates to user agreements" and either accept or archive.
+• Bulk-archive the 9 newsletter unread, or keep them subscribed deliberately.
+• Optional: lock Ollama to localhost (see SYSTEM ⚠️).
+• Optional: verify Proton Calendar share is still active (both calendar windows came back empty).
+
+To stop or manage this job, send me a new message (e.g. "stop reminder brief-sunday-audit").
